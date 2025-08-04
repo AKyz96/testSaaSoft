@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { Account, AccountData, AccountErrors } from '../types/accounts'
+import type { Account, AccountData, AccountLabel } from '../types/accounts'
 
 interface AccountsState {
   accounts: Account[]
@@ -20,7 +20,20 @@ export const useAccountsStore = defineStore('accounts', {
       try {
         const stored = localStorage.getItem('accounts')
         if (stored) {
-          this.accounts = JSON.parse(stored)
+          const accounts = JSON.parse(stored)
+          // Миграция данных: преобразуем строки labels в массив объектов
+          this.accounts = accounts.map((account: any) => {
+            if (typeof account.labels === 'string') {
+              // Если labels - строка, преобразуем в массив объектов
+              const labelsArray = account.labels
+                .split(';')
+                .map((label: string) => label.trim())
+                .filter((label: string) => label.length > 0)
+                .map((label: string) => ({ text: label }))
+              return { ...account, labels: labelsArray }
+            }
+            return account
+          })
         }
       } catch (error) {
         console.error('Ошибка загрузки данных из localStorage:', error)
@@ -28,10 +41,11 @@ export const useAccountsStore = defineStore('accounts', {
       }
     },
     
-    // Сохранение в localStorage
+    // Сохранение в localStorage только валидных аккаунтов
     saveToStorage(): void {
       try {
-        localStorage.setItem('accounts', JSON.stringify(this.accounts))
+        const validAccounts = this.accounts.filter(account => this.validateAccount(account))
+        localStorage.setItem('accounts', JSON.stringify(validAccounts))
       } catch (error) {
         console.error('Ошибка сохранения в localStorage:', error)
       }
@@ -40,21 +54,20 @@ export const useAccountsStore = defineStore('accounts', {
     addAccount(): void {
       const newAccount: Account = {
         id: Date.now(),
-        labels: '',
+        labels: [],
         type: 'local',
         login: '',
-        password: '',
-        showPassword: false,
-        errors: {}
+        password: ''
       }
       this.accounts.push(newAccount)
-      this.saveToStorage()
+      // Не сохраняем в localStorage при добавлении
     },
     
     removeAccount(id: number): void {
       const index = this.accounts.findIndex(account => account.id === id)
       if (index > -1) {
         this.accounts.splice(index, 1)
+        // Сохраняем только валидные аккаунты после удаления
         this.saveToStorage()
       }
     },
@@ -63,62 +76,54 @@ export const useAccountsStore = defineStore('accounts', {
       const account = this.accounts.find(acc => acc.id === id)
       if (account) {
         ;(account as any)[field] = value
-        this.validateAccount(id)
+        // Не сохраняем автоматически при обновлении
+      }
+    },
+    
+    // Валидация возвращает true/false, ошибки не сохраняются
+    validateAccount(account: Account): boolean {
+      // Валидация логина
+      if (!account.login.trim() || account.login.length > 100) {
+        return false
+      }
+      // Валидация пароля для локальных записей
+      if (account.type === 'local' && (!account.password?.trim() || account.password.length > 100)) {
+        return false
+      }
+      // Валидация меток - проверяем общую длину всех меток
+      const totalLabelsLength = account.labels.reduce((total, label) => total + label.text.length, 0)
+      if (totalLabelsLength > 50) {
+        return false
+      }
+      return true
+    },
+
+    // Обновление меток из массива объектов
+    updateAccountLabels(id: number, labels: AccountLabel[]): void {
+      const account = this.accounts.find(acc => acc.id === id)
+      if (account) {
+        account.labels = labels
         this.saveToStorage()
       }
     },
-    
-    validateAccount(id: number): boolean {
-      const account = this.accounts.find(acc => acc.id === id)
-      if (!account) return false
-      
-      const errors: AccountErrors = {}
-      
-      // Валидация логина
-      if (!account.login.trim()) {
-        errors.login = 'Логин обязателен'
-      } else if (account.login.length > 100) {
-        errors.login = 'Логин не должен превышать 100 символов'
-      }
-      
-      // Валидация пароля для локальных записей
-      if (account.type === 'local') {
-        if (!account.password.trim()) {
-          errors.password = 'Пароль обязателен для локальных записей'
-        } else if (account.password.length > 100) {
-          errors.password = 'Пароль не должен превышать 100 символов'
-        }
-      }
-      
-      // Валидация меток
-      if (account.labels.length > 50) {
-        errors.labels = 'Метки не должны превышать 50 символов'
-      }
-      
-      account.errors = errors
-      return Object.keys(errors).length === 0
+
+    // Преобразование массива меток в строку для отображения
+    labelsArrayToString(labels: AccountLabel[]): string {
+      return labels.map(label => label.text).join('; ')
     },
-    
+
     getAccountData(id: number): AccountData | null {
       const account = this.accounts.find(acc => acc.id === id)
       if (!account) return null
       
-      // Преобразование меток в массив объектов
-      const labelsArray = account.labels
-        .split(';')
-        .map(label => label.trim())
-        .filter(label => label.length > 0)
-        .map(label => ({ text: label }))
-      
       return {
         id: account.id,
-        labels: labelsArray,
+        labels: account.labels,
         type: account.type,
         login: account.login,
         password: account.type === 'ldap' ? null : account.password
       }
     },
-    
     getAllAccountsData(): AccountData[] {
       return this.accounts.map(account => this.getAccountData(account.id)!).filter(Boolean)
     }

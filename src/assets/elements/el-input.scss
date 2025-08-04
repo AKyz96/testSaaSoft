@@ -1,0 +1,23 @@
+// Стили для el-input с ошибкой
+.el-input {
+  &.border-red-500 {
+    .el-input__wrapper {
+      border-color: #ef4444 !important;
+      box-shadow: 0 0 0 1px #ef4444 !important;
+      background-color: #fef2f2;
+    }
+    
+    .el-input__inner {
+      background-color: #fef2f2;
+    }
+  }
+  
+  // При фокусе на поле с ошибкой
+  &.border-red-500:focus-within {
+    .el-input__wrapper {
+      border-color: #ef4444 !important;
+      background-color: #fef2f2;
+      box-shadow: 0 0 0 1px #ef4444 !important;
+    }
+  }
+} 
