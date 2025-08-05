@@ -18,7 +18,16 @@
         <span>Пароль</span>
         <span></span>
       </div>
-      <div v-for="account in accounts" :key="account.id" class="grid grid-cols-[2fr_1.2fr_2fr_2fr_40px] gap-3 items-center mb-2">
+      <div
+        v-for="account in accounts"
+        :key="account.id"
+        :class="[
+          'grid items-center mb-2',
+          account.type === 'ldap'
+            ? 'grid-cols-[2fr_1.2fr_4fr_0px_40px]'
+            : 'grid-cols-[2fr_1.2fr_2fr_2fr_40px]'
+        ]"
+      >
         <div class="flex flex-col gap-1">
           <el-input
             v-model="labelsInputs[account.id]"
@@ -28,7 +37,7 @@
             maxlength="50"
           />
         </div>
-        <div class="flex flex-col gap-1">
+        <div class="flex flex-col gap-1 pl-3">
           <CustomSelect
             v-model="account.type"
             :options="[
@@ -39,16 +48,16 @@
             @update:modelValue="(value) => updateField(account.id, 'type', value)"
           />
         </div>
-        <div class="flex flex-col gap-1">
+        <div class="flex flex-col gap-1 pl-3">
           <el-input
             v-model="account.login"
             placeholder="Значение"
             @blur="updateField(account.id, 'login', account.login)"
-            :class="errors[account.id]?.login ? 'border-red-500' : ''"
+            :class="[errors[account.id]?.login ? 'border-red-500' : '', account.type === 'ldap' ? 'w-full' : '']"
             maxlength="100"
           />
         </div>
-        <div class="flex flex-col gap-1">
+        <div class="flex flex-col gap-1 pl-3">
           <div v-if="account.type === 'local'">
             <el-input
               v-model="account.password"
@@ -56,7 +65,7 @@
               placeholder="Значение"
               show-password
               @blur="updateField(account.id, 'password', account.password)"
-              :class="errors[account.id]?.password ? 'border-red-500' : ''"
+              :class="[errors[account.id]?.password ? 'border-red-500' : '', account.type === 'local' ? 'hidden' : '']"
               maxlength="100"
             />
           </div>
@@ -74,7 +83,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, watch } from 'vue'
 import { useAccountsStore } from '../stores/accounts'
 import type { Account } from '../types/accounts'
 import CustomButton from '../UI/CustomButton.vue'
@@ -84,88 +93,59 @@ import { Plus, Delete } from '@element-plus/icons-vue'
 const accountsStore = useAccountsStore()
 const accounts = computed((): Account[] => accountsStore.getAccounts)
 
-// Локальное хранилище ошибок для покраски
+// Ошибки и строки для меток
 const errors = reactive<Record<number, { labels?: boolean; login?: boolean; password?: boolean }>>({})
-
-// Локальное хранилище строк для инпутов меток
 const labelsInputs = reactive<Record<number, string>>({})
 
-onMounted((): void => {
-  accountsStore.loadFromStorage()
-  if (accounts.value.length === 0) {
-    accountsStore.addAccount()
-  }
-  // Инициализация строк для всех аккаунтов
+// Инициализация строк для меток
+function syncLabelsInputs() {
   accounts.value.forEach(account => {
     labelsInputs[account.id] = account.labels.map(l => l.text).join('; ')
   })
+}
+onMounted(() => {
+  accountsStore.loadFromStorage()
+  if (accounts.value.length === 0) accountsStore.addAccount()
+  syncLabelsInputs()
 })
+watch(accounts, syncLabelsInputs)
 
-watch(accounts, (newAccounts) => {
-  newAccounts.forEach(account => {
-    if (!(account.id in labelsInputs)) {
-      labelsInputs[account.id] = account.labels.map(l => l.text).join('; ')
-    }
-  })
-})
-
-function addRow(): void {
+function addRow() {
   accountsStore.addAccount()
 }
-
-function removeRow(id: number): void {
+function removeRow(id: number) {
   accountsStore.removeAccount(id)
   delete errors[id]
   delete labelsInputs[id]
 }
-
-function validateField(account: Account, field: keyof Account) {
+function validateAllFields(account: Account) {
   if (!errors[account.id]) errors[account.id] = {}
-  // labels - проверяем общую длину всех меток
-  if (field === 'labels') {
-    const totalLabelsLength = account.labels.reduce((total, label) => total + label.text.length, 0)
-    errors[account.id].labels = totalLabelsLength > 50
-  }
-  // login
-  if (field === 'login') {
-    errors[account.id].login = !account.login.trim() || account.login.length > 100
-  }
-  // password - только для локальных записей
-  if (field === 'password' && account.type === 'local') {
+  const totalLabelsLength = account.labels.reduce((total, label) => total + label.text.length, 0)
+  errors[account.id].labels = totalLabelsLength > 50
+  errors[account.id].login = !account.login.trim() || account.login.length > 100
+  errors[account.id].password = false
+  if (account.type === 'local') {
     errors[account.id].password = !account.password?.trim() || account.password.length > 100
   }
-  if (field === 'type') {
-    // при смене типа сбрасываем ошибку пароля
-    errors[account.id].password = false
-  }
 }
-
 function isAccountValid(account: Account): boolean {
-  // Проверяем обязательные поля
   const hasValidLogin = account.login.trim() && account.login.length <= 100
   const hasValidPassword = account.type === 'ldap' || (account.password?.trim() && account.password.length <= 100)
   const totalLabelsLength = account.labels.reduce((total, label) => total + label.text.length, 0)
   const hasValidLabels = totalLabelsLength <= 50
-  
   return hasValidLogin && hasValidPassword && hasValidLabels
 }
-
-function updateField(id: number, field: keyof Account, value: string | number): void {
+function updateField(id: number, field: keyof Account, value: string | number) {
   accountsStore.updateAccount(id, field, String(value))
   const account = accounts.value.find(acc => acc.id === id)
   if (account) {
-    // Если изменился тип на LDAP, сбрасываем пароль
     if (field === 'type' && value === 'ldap') {
       accountsStore.updateAccount(id, 'password', null)
     }
-    validateField(account, field)
-    // Сохраняем только если все поля валидны
-    if (isAccountValid(account)) {
-      accountsStore.saveToStorage()
-    }
+    validateAllFields(account)
+    if (isAccountValid(account)) accountsStore.saveToStorage()
   }
 }
-
 function saveLabels(id: number) {
   const labels = labelsInputs[id]
     .split(';')
@@ -175,18 +155,9 @@ function saveLabels(id: number) {
   accountsStore.updateAccountLabels(id, labels)
   const account = accounts.value.find(acc => acc.id === id)
   if (account) {
-    validateField(account, 'labels')
-    if (isAccountValid(account)) {
-      accountsStore.saveToStorage()
-    }
+    validateAllFields(account)
+    if (isAccountValid(account)) accountsStore.saveToStorage()
   }
-}
-
-function getLabelsString(account: Account): string {
-  if (!Array.isArray(account.labels)) {
-    return ''
-  }
-  return account.labels.map(label => label.text).join('; ')
 }
 </script>
 
